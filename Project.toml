@@ -1,0 +1,29 @@
+name = "OLSPlots"
+uuid = "d28686bc-4daf-41d6-8281-8903475a5b9e"
+authors = ["technocrat <public@careaga.net>"]
+description = "Diagnostic tests for Ordinary Least Squares regression models"
+version = "0.1.0"
+
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Loess = "4345ca2d-374a-55d4-8d30-97f9976e7612"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+
+[compat]
+CairoMakie = "0.13.5"
+DataFrames = "1.7.0"
+Distributions = "0.25.120"
+GLM = "1.9.0"
+Loess = "0.6.4"
+julia = "1.6"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
