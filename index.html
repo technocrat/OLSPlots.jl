@@ -1,0 +1,104 @@
+
+<!doctype html>
+<html lang="English">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Technocrat's Toolbox</title>
+    <base href="https://technocrat.site/" />
+    <link rel="icon" type="image/png" href="/assets/favicon.png" sizes="32x32" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&family=Merriweather:ital,wght@0,300..900;1,300..900&display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="/css/mono.css" />
+</head>
+<style>
+    .styled-table {
+        border-collapse: collapse;
+        margin: 25px 0;
+        font-size: 0.9em;
+        width: 100%;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+        border-radius: 5px;
+        overflow: hidden;
+    }
+
+    .styled-table thead tr {
+        background-color: #2c3e50;
+        color: #ffffff;
+        text-align: left;
+    }
+
+    .styled-table th,
+    .styled-table td {
+        padding: 12px 15px;
+        border: none;
+    }
+
+    .styled-table tbody tr {
+        border-bottom: 1px solid #dddddd;
+    }
+
+    .styled-table tbody tr:nth-of-type(even) {
+        background-color: #f8f9fa;
+    }
+
+    .styled-table tbody tr:last-of-type {
+        border-bottom: 2px solid #2c3e50;
+    }
+
+    .styled-table img {
+        border-radius: 4px;
+        transition: transform 0.2s ease-in-out;
+    }
+
+    .styled-table img:hover {
+        transform: scale(1.05);
+    }
+</style>
+    <body>
+<h1 id="olsplots.jl">OLSPlots.jl</h1>
+
+<pre><code>OLSPlots.jl provides diagnostic plots in Julia for ordinary least squares  
+regression models prepared with GLM.lm. It's based on the plots method for the R  
+Programming Language's lm regression models. It differs slightly in the rendering  
+of loess lines due to a different algorithm in Julia's Loess package compared to  
+the R equivalent.
+</code></pre>
+
+<h2 id="compared-to-r">Compared to R</h2>
+
+<p>Using a simplified mtcars data set from R <a href="https://technocrat.site/OLSPlots/data/mtcars.csv">available here</a>, the R implementation is as follows:</p>
+
+<pre><code>model = lm(mpg ~ hp + drat + wt, df)  
+plot(model)
+</code></pre>
+
+<p><img src="https://tuva.s3.us-west-2.amazonaws.com/olsplots/Rplot.png" alt="Rplot" /></p>
+
+<p>The corresponding Julia implementation is as follows:</p>
+
+<pre><code>using CSV, DataFrames, GLM, OLSPlots  
+mtcars = ("data/mtcars.csv", DataFrames)  
+model = lm(@formula(mpg ~ hp + drat + wt), mtcars)  
+diagnostic_plots(model)
+</code></pre>
+
+<p><img src="https://tuva.s3.us-west-2.amazonaws.com/olsplots/Julia_plot.png" alt="Julia plot" /></p>
+
+<p><code>diagnostic_plots</code> takes a <code>which</code> argument, a vector in the range 1:6 to selectively display plots. The default is <code>[1,2,3,5]</code>. To show the additional plots</p>
+
+<pre><code>diagnostic_plots(model, which = [4,6])
+</code></pre>
+
+<p><img src="https://tuva.s3.us-west-2.amazonaws.com/olsplots/Julia2_plot.png" alt="Additional plots" /></p>
+
+<p>Additional details are in the <a href="https://technocrat.site/olsplots/">documentation</a>.</p>
+      </body>
+
+</html>
