@@ -1,8 +1,11 @@
 module OLSPlots
 
-using GLM, DataFrames, CairoMakie, LinearAlgebra, Distributions, Loess
+using GLM, CairoMakie, Distributions, LinearAlgebra, Loess, Statistics
 
 export diagnostic_plots
+
+# Diagonal of the hat matrix X(X'X)⁻¹X' via thin QR; avoids the n×n matrix.
+_leverage(X) = vec(sum(abs2, Matrix(qr(X).Q), dims=2))
 
 """
     diagnostic_plots(model; which=[1,2,3,5], r_style=true)
@@ -26,7 +29,7 @@ styled to match R's default diagnostic plot presentation.
 
 # Examples
 ```julia
-using GLM, DataFrames, OLSDiagnosticPlots
+using GLM, DataFrames, OLSPlots
 
 # Create sample data
 df = DataFrame(x1 = rand(100), x2 = rand(100), y = rand(100) .+ 2 .* rand(100))
@@ -42,6 +45,7 @@ fig = diagnostic_plots(ols_model, which=[1,2,3,4])
 
 # Or generate all six plots
 fig = diagnostic_plots(ols_model, which=1:6)
+```
 """
 function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
     # Extract model information
@@ -53,26 +57,30 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
     fitted_vals = predict(model)
     resids = residuals(model)
 
-    # Calculate hat matrix (leverage)
-    H = X * inv(X'X) * X'
-    h_ii = diag(H)
+    # Leverage: diagonal of the hat matrix, without forming the n×n matrix
+    h_ii = _leverage(X)
 
-    # Calculate standardized residuals
+    # Points with leverage 1 have zero residual variance; their standardized
+    # residuals and Cook's distances are undefined, so mark them NaN
+    h_ok = h_ii .< 1 - sqrt(eps())
+    denom = ifelse.(h_ok, 1 .- h_ii, NaN)
+
+    # Standardized residuals (R's rstandard)
     σ̂² = sum(resids.^2) / (n - p)  # MSE (mean squared error)
-    std_resids = resids ./ (sqrt(σ̂²) * sqrt.(1 .- h_ii))
-
-    # Calculate studentized residuals (R uses this for standardized residuals)
-    student_resids = resids ./ (sqrt(σ̂²) * sqrt.(1 .- h_ii))
+    std_resids = resids ./ (sqrt(σ̂²) * sqrt.(denom))
 
     # Calculate Cook's distance
-    cooks_d = (resids.^2 / (p * σ̂²)) .* (h_ii ./ (1 .- h_ii).^2)
+    cooks_d = (resids.^2 / (p * σ̂²)) .* (h_ii ./ denom.^2)
+    finite_max(v) = (f = filter(isfinite, v); isempty(f) ? 0.0 : maximum(f))
 
     # Identify influential points (Cook's distance > 4/n is often used as threshold)
     influential_idx = findall(cooks_d .> 4/n)
     
     # Filter which plots to show
-    which = sort(which)
-    which = which[which .>= 1 .& which .<= 6]
+    which = sort(unique(collect(which)))
+    all(w -> w in 1:6, which) ||
+        throw(ArgumentError("`which` must contain integers in 1:6, got $which"))
+    isempty(which) && throw(ArgumentError("`which` must not be empty"))
     
     # Create a figure with appropriate layout
     num_plots = length(which)
@@ -154,7 +162,8 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                    titlecolor=:black)
 
         # Create Q-Q plot exactly following R's approach
-        sorted_resids = sort(std_resids)
+        qq_idx = findall(isfinite, std_resids)
+        sorted_resids = sort(std_resids[qq_idx])
         n_resids = length(sorted_resids)
         
         # R uses (i-0.5)/n quantiles
@@ -189,9 +198,9 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
         # Label influential points
         if r_style
             # Map the standardized residuals to their original indices
-            sorted_indices = sortperm(std_resids)
+            rank_of = Dict(orig => r for (r, orig) in enumerate(qq_idx[sortperm(std_resids[qq_idx])]))
             for idx in influential_idx
-                idx_in_sorted = findfirst(sorted_indices .== idx)
+                idx_in_sorted = get(rank_of, idx, nothing)
                 if idx_in_sorted !== nothing
                     x_pos = theoretical_quantiles[idx_in_sorted]
                     y_pos = sorted_resids[idx_in_sorted]
@@ -226,7 +235,8 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
         # Add LOESS smoother using R's approach
         if r_style && length(fitted_vals) > 3
             # R uses panel.smooth which uses loess with span=2/3
-            model_loess = loess(fitted_vals, sqrt_std_resids, span=2/3)
+            ok3 = isfinite.(sqrt_std_resids)
+            model_loess = loess(fitted_vals[ok3], sqrt_std_resids[ok3], span=2/3)
             x_smooth = range(minimum(fitted_vals), maximum(fitted_vals), length=100)
             y_smooth = Loess.predict(model_loess, x_smooth)
             CairoMakie.lines!(ax3, x_smooth, y_smooth, color=:red, linewidth=1.5)
@@ -252,13 +262,11 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                    titlecolor=:black)
                    
         # Calculate y-axis limit following R's approach
-        ymx = maximum(cooks_d) * 1.075
+        ymx = max(finite_max(cooks_d) * 1.075, eps())
         CairoMakie.ylims!(ax4, 0, ymx)
         
         # Draw stems like in R's implementation (type="h")
-        for i in 1:n
-            CairoMakie.lines!(ax4, [i, i], [0, cooks_d[i]], color=:black, linewidth=0.5)
-        end
+        CairoMakie.rangebars!(ax4, 1:n, zeros(n), cooks_d, color=:black, linewidth=0.5)
         
         # Add points at the top of stems
         CairoMakie.scatter!(ax4, 1:n, cooks_d,
@@ -301,7 +309,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
         else
             # Normal residuals vs leverage plot
             # Filter out leverage values of 1 (as R does)
-            valid_idx = h_ii .< 1.0
+            valid_idx = h_ok
             
             # Set appropriate y-axis limits
             yr = maximum(abs.(std_resids[valid_idx])) * 1.1
@@ -392,10 +400,10 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
       g = h_ii ./ (1 .- h_ii)
       
       # Filter out points with leverage = 1
-      valid_idx = h_ii .< 1.0
+      valid_idx = h_ok
       
       # Set y-axis limit as in R
-      ymx = maximum(cooks_d) * 1.025
+      ymx = max(finite_max(cooks_d) * 1.025, eps())
       CairoMakie.ylims!(ax6, 0, ymx)
       
       CairoMakie.scatter!(ax6, g[valid_idx], cooks_d[valid_idx],
@@ -405,7 +413,6 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                           marker=:circle)
       
       # Add contour lines for constant standardized residuals
-      p_vals = length(coef(model))
       b_vals = [0.5, 1.0, 1.5, 2.0]  # Standardized residual values
       
       xmax = maximum(g[valid_idx])

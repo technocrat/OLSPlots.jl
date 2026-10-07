@@ -35,9 +35,11 @@ The package can generate six different diagnostic plots:
 
 The package calculates the following metrics:
 
-- **Leverage values**: Diagonal elements of the hat matrix H = X(X'X)⁻¹X'
-- **Standardized residuals**: Residuals divided by their standard deviation
-- **Cook's distances**: Measures of how much the regression would change if an observation were removed
+- **Leverage values**: Diagonal elements of the hat matrix ``H = X(X'X)^{-1}X'``, computed from a thin QR factorisation so the ``n \times n`` matrix is never formed
+- **Standardized residuals**: ``r_i / (\hat\sigma\sqrt{1-h_{ii}})``
+- **Cook's distances**: ``D_i = \dfrac{r_i^2}{p\hat\sigma^2}\dfrac{h_{ii}}{(1-h_{ii})^2}``
+
+Observations with leverage 1 have undefined standardized residuals and Cook's distances; they are omitted from the plots. Cook's distance flags observations above the ``4/n`` threshold.
 
 These metrics are used to create the diagnostic plots that help assess model fit, detect outliers, and identify influential observations.
 
