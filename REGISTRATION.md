@@ -15,20 +15,22 @@ Before registering, ensure the following are complete:
 - [x] Package has GitHub Actions workflows (CI, TagBot, CompatHelper)
 - [x] All compat entries are specified in Project.toml
 - [x] Code is pushed to GitHub
-- [ ] Tests pass on CI (after fixing Julia version compatibility)
+- [ ] Tests pass on CI for the release commit
 - [ ] Documentation builds successfully
 
-## Known Issues
+## Julia Version Compatibility
 
-### Julia Version Compatibility
+The supported minimum is Julia 1.10, as declared by `julia = "1.10"` in
+`Project.toml`. CI tests Julia 1.10, 1.11, and the latest stable Julia 1.x.
+CairoMakie compatibility is declared for versions 0.13, 0.14, and 0.15.
 
-There is currently a compatibility issue with CairoMakie v0.13.5 and Julia 1.12.0. The package works with Julia 1.6-1.11.
+Earlier instructions recommending Julia 1.6 support or a Julia 1.11 upper
+limit are obsolete. Any change to the compatibility bounds requires successful
+dependency resolution and tests on the affected versions before registration.
 
-**Recommendation**: Update dependencies to support Julia 1.12, or explicitly limit Julia compatibility to `julia = "1.6, 1.11"` in Project.toml until CairoMakie releases a compatible version.
-
-To resolve dependencies for Julia 1.11:
+To resolve dependencies and run the release checks locally:
 ```bash
-julia +1.11 --project=. -e 'using Pkg; Pkg.resolve(); Pkg.test()'
+julia --project=. -e 'using Pkg; Pkg.resolve(); Pkg.test()'
 ```
 
 ## Registration Steps

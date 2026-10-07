@@ -12,16 +12,18 @@ OLSPlots.jl provides an intuitive and flexible interface for producing diagnosti
 - Seamless integration with standard Julia data structures and statistical modeling packages.
 - Customizable outputs for publication-ready graphics.
 
-It emulates the R Programming Lanugage's plot function for models produced by the `lm()` function.
+Its six diagnostics are inspired by R's `plot.lm` function.
 ---
 
 ## Installation
 
-To install the latest version of OLSPlots.jl, use Julia’s package manager:
+OLSPlots requires Julia 1.10 or later. To install the package, use Julia’s package manager:
 
 ```julia
 using Pkg
 Pkg.add(url="https://github.com/technocrat/OLSPlots.jl")
+# Dependencies used directly by the example below:
+Pkg.add(["GLM", "DataFrames"])
 ```
 
 ---
@@ -41,7 +43,7 @@ ols_model = lm(@formula(y ~ X1 + X2), df)
 diagnostic_plots(ols_model)
 
 # Cook's Distance only 
-diagnostic_plots(ols_model, which=[5])
+diagnostic_plots(ols_model, which=[4])
 
 # All six plots
 diagnostic_plots(ols_model, which=[1,2,3,4,5,6])
@@ -49,15 +51,31 @@ diagnostic_plots(ols_model, which=[1,2,3,4,5,6])
 
 Plots are returned as objects from the `CairoMakie` ecosystem, allowing further customization or direct export.
 
+For a reproducible comparison with R, use the checked-in
+[`mtcars` CSV and R diagnostic reference](data/README.md). The included scripts
+fit the same model in Julia and R, compare numeric diagnostics, and export all
+six plots. The Julia comparison does not require R or RDatasets.jl.
+
 ---
 
 ## Features
 
-- Residuals diagnostics (histograms, Q-Q plots, scatter plots).
-- Fitted vs. actual outcome comparison.
-- Leverage and influence plots.
-- Custom themes and labeling options.
-- Designed for extensibility with new plot types.
+- Residuals vs fitted values, normal Q-Q, and scale-location plots.
+- Cook's distance, residuals vs leverage, and Cook's distance vs transformed leverage.
+- Selection of individual panels or all six diagnostics.
+- R-inspired smoothing and observation labels, controlled by `r_style`.
+- CairoMakie figures that can be customized and exported.
+
+Unweighted GLM.jl linear models are supported, including models with redundant
+predictors. Calculations use the fitted model's effective rank. Weighted and
+generalized linear models are rejected with an informative `ArgumentError`.
+
+Plots 2–6 need positive residual degrees of freedom and positive, finite
+residual variance. When those diagnostics are undefined, the function raises
+an `ArgumentError`; `which=[1]` still shows raw residuals. Observations with
+leverage within `sqrt(eps(T))` of one (for the calculation's floating-point type
+`T`) are omitted from standardized and influence diagnostics. Smoothing is
+skipped when too few usable data remain.
 
 ---
 
@@ -70,6 +88,16 @@ Comprehensive documentation and examples are available at [Technocrat’s Toolbo
 ## Contributing
 
 Contributions and feedback are welcome. Please submit issues or pull requests on the [GitHub repository](https://github.com/technocrat/OLSPlots.jl).
+
+Run the tests from the repository root:
+
+```sh
+julia --project=. -e 'using Pkg; Pkg.test()'
+```
+
+The suite checks numerical diagnostics against the checked-in R reference,
+rank-deficient and degenerate fits, selected panels, contour coordinates,
+and PNG/PDF export.
 
 ---
 

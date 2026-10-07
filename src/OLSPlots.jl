@@ -4,17 +4,97 @@ using GLM, CairoMakie, Distributions, LinearAlgebra, Loess, Statistics
 
 export diagnostic_plots
 
-# Diagonal of the hat matrix X(X'X)⁻¹X' via thin QR; avoids the n×n matrix.
-_leverage(X) = vec(sum(abs2, Matrix(qr(X).Q), dims=2))
+# Only the independent QR directions contribute to the projection. Callers
+# with a fitted model supply its effective rank instead of estimating it again.
+function _leverage(X, p::Integer=rank(X))
+    0 <= p <= min(size(X)...) || throw(ArgumentError("invalid model rank: $p"))
+    p == 0 && return zeros(float(eltype(X)), size(X, 1))
+    factor = qr(X, ColumnNorm())
+    # Apply the packed Householder reflectors to a single n×p buffer in place.
+    # Materialize only the retained Q columns, without a second dense result.
+    Q = Matrix{eltype(factor.Q)}(I, size(X, 1), p)
+    lmul!(factor.Q, Q)
+    return clamp.(vec(sum(abs2, Q, dims=2)), 0, 1)
+end
+
+# Keep the GLM/StatsModels wrapper handling at the model boundary. Weighted
+# fits need different influence formulas and are intentionally not OLS inputs.
+_ols_model(model::GLM.LinearModel) = model
+_ols_model(model::GLM.StatsModels.TableRegressionModel) = _ols_model(model.model)
+_ols_model(model) = throw(ArgumentError("expected an unweighted GLM.jl linear model fitted with lm"))
+
+function _diagnostics(model)
+    model = _ols_model(model)
+    isempty(model.rr.wts) || throw(ArgumentError("weighted models are not supported; expected an unweighted OLS fit"))
+    X = modelmatrix(model)
+    fitted_vals = predict(model)
+    resids = residuals(model)
+    n = length(resids)
+    n > 0 || throw(ArgumentError("the fitted model has no observations"))
+    all(isfinite, X) && all(isfinite, fitted_vals) && all(isfinite, resids) ||
+        throw(ArgumentError("model matrix, fitted values, and residuals must be finite"))
+    p = Int(dof(model) - 1) # GLM counts the dispersion parameter in dof.
+    residual_df = dof_residual(model)
+    # Use the columns retained by GLM's pivoted fit, including when GLM treats
+    # nearly dependent columns as redundant at its own rank tolerance.
+    predictor = model.pp
+    active_X = if p < size(X, 2) && predictor isa GLM.DensePredChol && predictor.chol isa CholeskyPivoted
+        view(X, :, predictor.chol.p[1:p])
+    else
+        X
+    end
+    h_ii = _leverage(active_X, p)
+    h_ok = h_ii .< 1 - sqrt(eps(eltype(h_ii)))
+    mse = residual_df > 0 ? sum(abs2, resids) / residual_df : NaN
+    undefined_reason = if residual_df <= 0
+        "diagnostics require positive residual degrees of freedom"
+    elseif p == 0
+        "influence diagnostics require at least one estimated coefficient"
+    elseif !isfinite(mse) || mse <= 0
+        "standardized diagnostics require positive, finite residual variance"
+    elseif !any(h_ok)
+        "no observations have defined standardized diagnostics (all leverage values are near one)"
+    else
+        nothing
+    end
+    denom = ifelse.(h_ok, 1 .- h_ii, NaN)
+    std_resids = undefined_reason === nothing ? resids ./ (sqrt(mse) .* sqrt.(denom)) : fill(NaN, n)
+    cooks_d = undefined_reason === nothing ? (std_resids.^2 ./ p) .* (h_ii ./ denom) : fill(NaN, n)
+    return (; fitted_vals, resids, n, p, residual_df, mse, h_ii, h_ok,
+            std_resids, cooks_d, undefined_reason)
+end
+
+# LOESS needs enough finite observations and distinct x values for its local
+# quadratic fit. Never predict beyond the range of the retained observations.
+function _smooth_values(x, y)
+    ok = isfinite.(x) .& isfinite.(y)
+    xs, ys = x[ok], y[ok]
+    length(xs) >= 6 && length(unique(xs)) >= 3 || return nothing
+    model = loess(xs, ys, span=2/3)
+    grid = range(extrema(xs)..., length=100)
+    values = Loess.predict(model, grid)
+    all(isfinite, values) || return nothing
+    return grid, values
+end
+
+function _smooth!(ax, x, y)
+    smooth = _smooth_values(x, y)
+    smooth === nothing && return
+    CairoMakie.lines!(ax, smooth..., color=:red, linewidth=1.5)
+end
+
+_finite_max(v) = (f = filter(isfinite, v); isempty(f) ? 0.0 : maximum(f))
+_residual_limit(v) = (limit = 1.1 * _finite_max(abs.(v)); limit > 0 ? limit : 1.0)
 
 """
     diagnostic_plots(model; which=[1,2,3,5], r_style=true)
 
 Generate standard diagnostic plots for an ordinary least squares (OLS) regression model,
-styled to match R's default diagnostic plot presentation.
+with presentation inspired by R's default diagnostic plots.
 
 # Arguments
-- `model`: A fitted regression model from GLM.jl (e.g., created with `lm()`)
+- `model`: An unweighted linear model from GLM.jl, created with `lm()`;
+  redundant predictor columns are supported using the fitted model's effective rank.
 - `which`: Vector of integers specifying which plots to show (default: [1,2,3,5], matching R's default)
   1. Residuals vs Fitted Values
   2. Normal Q-Q Plot
@@ -26,6 +106,14 @@ styled to match R's default diagnostic plot presentation.
 
 # Returns
 - A CairoMakie Figure object containing the diagnostic plots
+
+# Undefined diagnostics
+Plots 2–6 require positive residual degrees of freedom and positive, finite
+residual variance. Otherwise an `ArgumentError` explains the undefined
+diagnostics; use `which=[1]` to show raw residuals. Observations with leverage
+within `sqrt(eps(T))` of one, where `T` is the leverage calculation's floating-point
+type, are omitted from standardized diagnostics and influence plots. Smoothing
+is skipped when too few usable observations remain.
 
 # Examples
 ```julia
@@ -48,39 +136,17 @@ fig = diagnostic_plots(ols_model, which=1:6)
 ```
 """
 function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
-    # Extract model information
-    X = modelmatrix(model)
-    y = response(model)
-    n, p = size(X)
-    
-    # Get fitted values and residuals
-    fitted_vals = predict(model)
-    resids = residuals(model)
-
-    # Leverage: diagonal of the hat matrix, without forming the n×n matrix
-    h_ii = _leverage(X)
-
-    # Points with leverage 1 have zero residual variance; their standardized
-    # residuals and Cook's distances are undefined, so mark them NaN
-    h_ok = h_ii .< 1 - sqrt(eps())
-    denom = ifelse.(h_ok, 1 .- h_ii, NaN)
-
-    # Standardized residuals (R's rstandard)
-    σ̂² = sum(resids.^2) / (n - p)  # MSE (mean squared error)
-    std_resids = resids ./ (sqrt(σ̂²) * sqrt.(denom))
-
-    # Calculate Cook's distance
-    cooks_d = (resids.^2 / (p * σ̂²)) .* (h_ii ./ denom.^2)
-    finite_max(v) = (f = filter(isfinite, v); isempty(f) ? 0.0 : maximum(f))
-
-    # Identify influential points (Cook's distance > 4/n is often used as threshold)
-    influential_idx = findall(cooks_d .> 4/n)
-    
-    # Filter which plots to show
-    which = sort(unique(collect(which)))
-    all(w -> w in 1:6, which) ||
+    which = collect(which)
+    all(w -> w isa Integer && !(w isa Bool) && w in 1:6, which) ||
         throw(ArgumentError("`which` must contain integers in 1:6, got $which"))
     isempty(which) && throw(ArgumentError("`which` must not be empty"))
+    which = sort(unique(which))
+    data = _diagnostics(model)
+    if data.undefined_reason !== nothing && any(!=(1), which)
+        throw(ArgumentError(data.undefined_reason * "; use `which=[1]` for raw residuals"))
+    end
+    (; fitted_vals, resids, n, p, h_ii, h_ok, std_resids, cooks_d) = data
+    influential_idx = findall(isfinite.(cooks_d) .& (cooks_d .> 4/n))
     
     # Create a figure with appropriate layout
     num_plots = length(which)
@@ -92,7 +158,6 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
     marker_color = :black
     
     # Plot counter and positions
-    plot_counter = 1
     plot_positions = Dict{Int, Tuple{Int, Int}}()
     
     # Calculate positions for each plot
@@ -121,7 +186,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
         
         # Set x and y-axis limits to match R
         CairoMakie.xlims!(ax1, minimum(fitted_vals) - 0.5, maximum(fitted_vals) + 0.5)
-        yr = maximum(abs.(resids)) * 1.1
+        yr = _residual_limit(resids)
         CairoMakie.ylims!(ax1, -yr, yr)
                    
         # Using open circles with black outline to match R
@@ -131,14 +196,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                             strokewidth=1,
                             marker=:circle)
                             
-        # Add LOESS smoother with R's exact approach
-        if r_style && length(fitted_vals) > 3
-            # R uses panel.smooth which uses loess with span=2/3
-            model_loess = loess(fitted_vals, resids, span=2/3)
-            x_smooth = range(minimum(fitted_vals), maximum(fitted_vals), length=100)
-            y_smooth = Loess.predict(model_loess, x_smooth)
-            CairoMakie.lines!(ax1, x_smooth, y_smooth, color=:red, linewidth=1.5)
-        end
+        r_style && _smooth!(ax1, fitted_vals, resids)
         
         CairoMakie.hlines!(ax1, [0], color=:black, linestyle=:dash)
         
@@ -161,12 +219,12 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                    ylabel="Standardized Residuals",
                    titlecolor=:black)
 
-        # Create Q-Q plot exactly following R's approach
+        # Create a Q-Q plot from finite standardized residuals.
         qq_idx = findall(isfinite, std_resids)
         sorted_resids = sort(std_resids[qq_idx])
         n_resids = length(sorted_resids)
         
-        # R uses (i-0.5)/n quantiles
+        # Half-step plotting positions for the normal quantiles.
         p_points = [(i - 0.5) / n_resids for i in 1:n_resids]
         theoretical_quantiles = [quantile(Normal(), p) for p in p_points]
 
@@ -232,15 +290,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                             strokewidth=1,
                             marker=:circle)
                             
-        # Add LOESS smoother using R's approach
-        if r_style && length(fitted_vals) > 3
-            # R uses panel.smooth which uses loess with span=2/3
-            ok3 = isfinite.(sqrt_std_resids)
-            model_loess = loess(fitted_vals[ok3], sqrt_std_resids[ok3], span=2/3)
-            x_smooth = range(minimum(fitted_vals), maximum(fitted_vals), length=100)
-            y_smooth = Loess.predict(model_loess, x_smooth)
-            CairoMakie.lines!(ax3, x_smooth, y_smooth, color=:red, linewidth=1.5)
-        end
+        r_style && _smooth!(ax3, fitted_vals, sqrt_std_resids)
         
         # Label influential points
         if r_style
@@ -262,7 +312,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                    titlecolor=:black)
                    
         # Calculate y-axis limit following R's approach
-        ymx = max(finite_max(cooks_d) * 1.075, eps())
+        ymx = max(_finite_max(cooks_d) * 1.075, eps())
         CairoMakie.ylims!(ax4, 0, ymx)
         
         # Draw stems like in R's implementation (type="h")
@@ -299,7 +349,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
         
         # R checks for constant leverage
         r_hat = extrema(h_ii)
-        isConst_hat = r_hat[1] == 0 || (r_hat[2] - r_hat[1]) < 1e-10 * mean(h_ii)
+        isConst_hat = r_hat[2] == 0 || (r_hat[2] - r_hat[1]) < 1e-10 * mean(h_ii)
         
         if isConst_hat
             # Handle constant leverage case (typically not needed for most models)
@@ -312,7 +362,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
             valid_idx = h_ok
             
             # Set appropriate y-axis limits
-            yr = maximum(abs.(std_resids[valid_idx])) * 1.1
+            yr = _residual_limit(std_resids[valid_idx])
             CairoMakie.ylims!(ax5, -yr, yr)
             
             CairoMakie.scatter!(ax5, h_ii[valid_idx], std_resids[valid_idx],
@@ -343,14 +393,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
                       text="Cook's distance", color=:red, fontsize=8)
             
             # Add LOESS smoother
-            if r_style && length(h_ii) > 3
-                valid_h = h_ii[valid_idx]
-                valid_r = std_resids[valid_idx]
-                model_loess = loess(valid_h, valid_r, span=2/3)
-                x_smooth = range(minimum(valid_h), maximum(valid_h), length=100)
-                y_smooth = Loess.predict(model_loess, x_smooth)
-                CairoMakie.lines!(ax5, x_smooth, y_smooth, color=:red, linewidth=1.5)
-            end
+            r_style && _smooth!(ax5, h_ii[valid_idx], std_resids[valid_idx])
             
             # Add secondary axis labels for Cook's distance as in R
             if r_style
@@ -403,7 +446,7 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
       valid_idx = h_ok
       
       # Set y-axis limit as in R
-      ymx = max(finite_max(cooks_d) * 1.025, eps())
+      ymx = max(_finite_max(cooks_d) * 1.025, eps())
       CairoMakie.ylims!(ax6, 0, ymx)
       
       CairoMakie.scatter!(ax6, g[valid_idx], cooks_d[valid_idx],
@@ -419,26 +462,26 @@ function diagnostic_plots(model; which=[1,2,3,5], r_style=true)
       ymax = ymx
       
       for b in b_vals
-          b2 = b^2
+          slope = b^2 / p
           x_vals = range(0, xmax, length=100)
-          y_vals = b2 .* x_vals
+          y_vals = slope .* x_vals
           
           if maximum(y_vals) < ymax
               # Draw full line
               CairoMakie.lines!(ax6, x_vals, y_vals, color=:red, linestyle=:dash)
               
               # Add label at the end of the line
-              CairoMakie.text!(ax6, xmax + 0.05, b2 * xmax, text=string(b), 
+              CairoMakie.text!(ax6, xmax + 0.05, slope * xmax, text=string(b),
                       fontsize=8, color=:red, align=(:left, :center))
           else
               # Find where line intersects with top of plot
-              x_intersect = ymax / b2
-              CairoMakie.lines!(ax6, range(0, x_intersect, length=100), 
-                        b2 .* range(0, x_intersect, length=100), 
+              x_intersect = ymax / slope
+              CairoMakie.lines!(ax6, range(0, x_intersect, length=100),
+                        slope .* range(0, x_intersect, length=100),
                         color=:red, linestyle=:dash)
                         
               # Add label at the top
-              CairoMakie.text!(ax6, x_intersect, ymax - 0.02, text=string(b), 
+              CairoMakie.text!(ax6, x_intersect, 0.95 * ymax, text=string(b),
                       fontsize=8, color=:red, align=(:center, :top))
           end
       end

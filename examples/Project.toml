@@ -1,0 +1,13 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
+OLSPlots = "d28686bc-4daf-41d6-8281-8903475a5b9e"
+
+[compat]
+CairoMakie = "0.13, 0.14, 0.15"
+DataFrames = "1.8.2"
+DelimitedFiles = "1"
+GLM = "1.9"
+julia = "1.10"

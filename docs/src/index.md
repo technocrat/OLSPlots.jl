@@ -11,11 +11,13 @@ OLSPlots.jl is a Julia package for creating diagnostic plots for ordinary least 
 
 ## Installation
 
-You can install the package via the Julia package manager:
+With Julia 1.10 or later, install the package and the dependencies used directly
+by the example:
 
 ```julia
 using Pkg
-Pkg.add("OLSPlots")
+Pkg.add(url="https://github.com/technocrat/OLSPlots.jl")
+Pkg.add(["GLM", "DataFrames", "CairoMakie"])
 ```
 
 ## Quick Start
@@ -67,9 +69,15 @@ fig = diagnostic_plots(ols_model, which=1:6)
 fig = diagnostic_plots(ols_model, which=[2,4])
 ```
 
-By default, plots are styled to match R's appearance. This can be disabled with:
+By default, plots use R-inspired smoothers, observation labels, and a Q-Q
+reference line. These additions can be disabled with:
 
 ```julia
 fig = diagnostic_plots(ols_model, r_style=false)
 ```
 
+The input must be an unweighted linear model. Redundant predictor columns are
+supported. If residual variance is zero or there are no residual degrees of
+freedom, use `which=[1]` for raw residuals; requests for standardized or influence
+diagnostics raise an informative `ArgumentError`. See the API reference for
+the calculation and filtering rules.
