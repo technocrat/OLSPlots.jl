@@ -1,6 +1,6 @@
 name = "OLSPlots"
 uuid = "d28686bc-4daf-41d6-8281-8903475a5b9e"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["technocrat <public@careaga.net>"]
 description = "Diagnostic tests for Ordinary Least Squares regression models"
 
