@@ -81,7 +81,7 @@ skipped when too few usable data remain.
 
 ## Documentation
 
-Documentation is available at [technocrat.github.io/OLSPlots.jl](https://technocrat.github.io/OLSPlots.jl/stable/). Development docs track `main` at [/dev](https://technocrat.github.io/OLSPlots.jl/dev/).
+Documentation is available at [technocrat.github.io/OLSPlots.jl](https://technocrat.github.io/OLSPlots.jl/stable/). Development docs track `main` at [/dev](https://technocrat.github.io/OLSPlots.jl/dev/). See [NEWS.md](NEWS.md) for release notes.
 
 ---
 
